@@ -36,6 +36,8 @@ module pl_datapath (
     input  logic        MemWrite,
     input  logic        Branch,
     input  logic [1:0]  ALUOp,
+    input  logic [1:0]  ResultSrc,    // NOVO -- mux do dado de write-back (EX)
+    input  logic        JumpReg,      // NOVO -- 1=JALR (alvo rs1+imm), 0=JAL
 
     // Codigo de operacao da ALU (pl_alu_ctrl, usa campos do estagio EX)
     input  logic [3:0]  ALU_CC,
@@ -186,6 +188,8 @@ module pl_datapath (
             id_ex.mem_write  <= 1'b0;
             id_ex.alu_op     <= 2'b00;
             id_ex.branch     <= 1'b0;
+            id_ex.result_src <= 2'b00;
+            id_ex.jump_reg   <= 1'b0;
             id_ex.pc         <= 32'b0;
             id_ex.rd1        <= 32'b0;
             id_ex.rd2        <= 32'b0;
@@ -203,6 +207,8 @@ module pl_datapath (
             id_ex.mem_write  <= 1'b0;
             id_ex.alu_op     <= 2'b00;
             id_ex.branch     <= 1'b0;
+            id_ex.result_src <= 2'b00;
+            id_ex.jump_reg   <= 1'b0;
             id_ex.pc         <= 32'b0;
             id_ex.rd1        <= 32'b0;
             id_ex.rd2        <= 32'b0;
@@ -220,6 +226,8 @@ module pl_datapath (
             id_ex.mem_write  <= MemWrite;
             id_ex.alu_op     <= ALUOp;
             id_ex.branch     <= Branch;
+            id_ex.result_src <= ResultSrc;
+            id_ex.jump_reg   <= JumpReg;
             id_ex.pc         <= if_id.pc;
             id_ex.rd1        <= rd1;
             id_ex.rd2        <= rd2;
@@ -280,9 +288,78 @@ module pl_datapath (
         .Zero      (zero)
     );
 
-    // Branch resolvido no estagio EX (flush 2 instrucoes se taken)
-    assign branch_target = id_ex.pc + id_ex.imm_ext;
-    assign pc_src        = id_ex.branch && zero;
+    // -------------------------------------------------------------------
+    // Resolucao de branch -- comparador dedicado (independente da ALU)
+    // -------------------------------------------------------------------
+    // Por que nao reaproveitar SUB+Zero da ALU como antes? Aquele truque
+    // so prova igualdade (Zero) corretamente. Para BLT/BGE (com sinal) a
+    // subtracao pode ter overflow e dar a condicao errada; para BLTU/BGEU
+    // precisariamos de outro circuito ainda. Um comparador dedicado, usando
+    // os mesmos operandos ja adiantados (fwd_srca/fwd_srcb), resolve todos
+    // os 6 branches de forma direta e correta.
+    //
+    // Observacao: para instrucoes de branch o controle mantem ALUSrc=0,
+    // logo fwd_srcb (antes do mux ALUSrc) e exatamente o rs2 adiantado --
+    // por isso podemos usa-lo aqui em vez de alu_srcb.
+    logic eq, lt_signed, lt_unsigned, branch_taken;
+
+    assign eq          = (fwd_srca == fwd_srcb);
+    assign lt_signed   = ($signed(fwd_srca) < $signed(fwd_srcb));
+    assign lt_unsigned = (fwd_srca < fwd_srcb);
+
+    always_comb begin
+        case (id_ex.funct3)
+            3'b000:  branch_taken = eq;            // BEQ
+            3'b001:  branch_taken = ~eq;            // BNE
+            3'b100:  branch_taken = lt_signed;      // BLT
+            3'b101:  branch_taken = ~lt_signed;      // BGE
+            3'b110:  branch_taken = lt_unsigned;    // BLTU
+            3'b111:  branch_taken = ~lt_unsigned;    // BGEU
+            default: branch_taken = 1'b0;
+        endcase
+    end
+
+    // -------------------------------------------------------------------
+    // Alvos de desvio / salto
+    // -------------------------------------------------------------------
+    // pc_plus_imm serve tanto para o alvo de Branch/JAL (PC-relativo)
+    // quanto para o resultado de AUIPC (PC + imediato).
+    logic [31:0] pc_plus_imm;
+    logic        is_jump;        // JAL ou JALR (desvio incondicional)
+    logic [31:0] jalr_target;    // alvo de JALR: (rs1 + imm) com bit0 = 0
+    logic [31:0] redirect_target;
+
+    assign pc_plus_imm = id_ex.pc + id_ex.imm_ext;
+    assign is_jump     = (id_ex.result_src == 2'b01);
+
+    // JALR usa rs1 adiantado (fwd_srca) + imediato; o bit0 e zerado por
+    // definicao da especificacao RV32I (alinhamento de instrucao).
+    assign jalr_target = (fwd_srca + id_ex.imm_ext) & ~32'h1;
+
+    assign redirect_target = (is_jump && id_ex.jump_reg) ? jalr_target
+                                                          : pc_plus_imm;
+
+    // Branch resolvido no estagio EX (flush 2 instrucoes se taken/jump)
+    assign branch_target = redirect_target;
+    assign pc_src         = (id_ex.branch && branch_taken) || is_jump;
+
+    // -------------------------------------------------------------------
+    // Mux do dado a propagar como "alu_result" pelo restante do pipeline
+    // -------------------------------------------------------------------
+    // Reaproveita o MESMO campo ex_mem.alu_result / mem_wb.alu_result que
+    // ja existia para alimentar o write-back; assim nao precisamos de
+    // nenhum campo novo em ex_mem_t/mem_wb_t. O mux de WB (mem_to_reg ?
+    // read_data : alu_result) permanece inalterado.
+    logic [31:0] ex_result;
+
+    always_comb begin
+        case (id_ex.result_src)
+            2'b01:   ex_result = id_ex.pc + 32'd4; // JAL/JALR: endereco de retorno
+            2'b10:   ex_result = id_ex.imm_ext;    // LUI: imediato direto
+            2'b11:   ex_result = pc_plus_imm;      // AUIPC: PC + imediato
+            default: ex_result = alu_result;       // R-type/I-type/Load/Store/Branch
+        endcase
+    end
 
     // =========================================================================
     // Registrador EX/MEM
@@ -302,7 +379,7 @@ module pl_datapath (
             ex_mem.reg_write   <= id_ex.reg_write;
             ex_mem.mem_read    <= id_ex.mem_read;
             ex_mem.mem_write   <= id_ex.mem_write;
-            ex_mem.alu_result  <= alu_result;
+            ex_mem.alu_result  <= ex_result;
             ex_mem.write_data  <= fwd_srcb;   // rs2 adiantado (para SW/MMIO)
             ex_mem.rd          <= id_ex.rd;
             ex_mem.funct3      <= id_ex.funct3;
@@ -314,11 +391,52 @@ module pl_datapath (
     // =========================================================================
     assign mmio_sel = ex_mem.alu_result[10];
 
+    // -------------------------------------------------------------------
+    // STORE -- combinar byte/halfword no word antes de escrever (SB/SH/SW)
+    // -------------------------------------------------------------------
+    // pl_dmem (assim como pl_imem/pl_regfile) e enderecada por palavra e
+    // tem leitura assincrona/combinacional + escrita sincrona (mesmo estilo
+    // documentado nos demais modulos deste projeto). Isso permite o truque
+    // classico de "read-modify-write": no MESMO ciclo em que escrevemos,
+    // dmem_rd ainda reflete o conteudo ANTIGO da palavra naquele endereco
+    // (a escrita so e visivel no proximo ciclo). Por isso podemos montar o
+    // novo valor da palavra aqui, sem nenhuma alteracao em pl_dmem.sv.
+    //
+    // IMPORTANTE: isso pressupoe leitura combinacional em pl_dmem. Se a sua
+    // pl_dmem.sv real tiver leitura sincrona (registrada), este merge
+    // precisa ser feito dentro de pl_dmem (com write-enables por byte) em
+    // vez de aqui -- nesse caso, compartilhe pl_dmem.sv para eu adaptar.
+    logic [1:0]  byte_off;
+    logic [31:0] store_word;
+
+    assign byte_off = ex_mem.alu_result[1:0];
+
+    always_comb begin
+        store_word = dmem_rd;  // parte do valor antigo da palavra
+        case (ex_mem.funct3)
+            3'b000: begin                                  // SB
+                case (byte_off)
+                    2'b00: store_word[7:0]   = ex_mem.write_data[7:0];
+                    2'b01: store_word[15:8]  = ex_mem.write_data[7:0];
+                    2'b10: store_word[23:16] = ex_mem.write_data[7:0];
+                    2'b11: store_word[31:24] = ex_mem.write_data[7:0];
+                endcase
+            end
+            3'b001: begin                                  // SH
+                if (byte_off[1] == 1'b0)
+                    store_word[15:0]  = ex_mem.write_data[15:0];
+                else
+                    store_word[31:16] = ex_mem.write_data[15:0];
+            end
+            default: store_word = ex_mem.write_data;        // SW (palavra completa)
+        endcase
+    end
+
     pl_dmem dmem (
         .clk       (clk),
         .MemWrite  (ex_mem.mem_write & ~mmio_sel),
         .addr      (ex_mem.alu_result[9:2]),
-        .WriteData (ex_mem.write_data),
+        .WriteData (store_word),
         .ReadData  (dmem_rd)
     );
 
@@ -328,7 +446,7 @@ module pl_datapath (
         .MemWrite  (ex_mem.mem_write &  mmio_sel),
         .MemRead   (ex_mem.mem_read  &  mmio_sel),
         .addr      (ex_mem.alu_result[4:2]),
-        .WriteData (ex_mem.write_data),
+        .WriteData (ex_mem.write_data),   // MMIO: sempre palavra completa
         .SW        (SW),
         .KEY       (KEY),
         .ReadData  (mmio_rd),
@@ -338,12 +456,37 @@ module pl_datapath (
         .UART_RXD  (UART_RXD)
     );
 
-    assign mem_read_data = mmio_sel ? mmio_rd : dmem_rd;
+    logic [31:0] mem_read_raw;
+    assign mem_read_raw = mmio_sel ? mmio_rd : dmem_rd;
+
+    // -------------------------------------------------------------------
+    // LOAD -- extrair byte/halfword e estender sinal/zero (LB/LH/LW/LBU/LHU)
+    // -------------------------------------------------------------------
+    logic [7:0]  load_byte;
+    logic [15:0] load_half;
+
+    always_comb begin
+        case (byte_off)
+            2'b00: load_byte = mem_read_raw[7:0];
+            2'b01: load_byte = mem_read_raw[15:8];
+            2'b10: load_byte = mem_read_raw[23:16];
+            2'b11: load_byte = mem_read_raw[31:24];
+        endcase
+        load_half = byte_off[1] ? mem_read_raw[31:16] : mem_read_raw[15:0];
+
+        case (ex_mem.funct3)
+            3'b000:  mem_read_data = {{24{load_byte[7]}}, load_byte};   // LB
+            3'b001:  mem_read_data = {{16{load_half[15]}}, load_half};  // LH
+            3'b100:  mem_read_data = {24'b0, load_byte};                // LBU
+            3'b101:  mem_read_data = {16'b0, load_half};                // LHU
+            default: mem_read_data = mem_read_raw;                     // LW
+        endcase
+    end
 
     // Saidas de observabilidade para o testbench
     assign mem_wr_en   = ex_mem.mem_write & ~mmio_sel;
     assign mem_wr_addr = ex_mem.alu_result[9:2];
-    assign mem_wr_data = ex_mem.write_data;
+    assign mem_wr_data = store_word;
 
     // =========================================================================
     // Registrador MEM/WB

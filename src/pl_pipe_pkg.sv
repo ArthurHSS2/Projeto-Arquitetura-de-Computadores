@@ -27,6 +27,8 @@ package pl_pipe_pkg;
         logic        mem_write;
         logic [1:0]  alu_op;
         logic        branch;
+        logic [1:0]  result_src;  // NOVO -- mux do dado de write-back (EX)
+        logic        jump_reg;    // NOVO -- 1 = JALR (alvo rs1+imm), 0 = JAL
         // dados
         logic [31:0] pc;
         logic [31:0] rd1;       // saida 1 do banco de registradores

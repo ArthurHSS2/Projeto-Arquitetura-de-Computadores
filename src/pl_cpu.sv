@@ -47,6 +47,8 @@ module pl_cpu (
 
     logic       ALUSrc, MemtoReg, RegWrite, MemRead, MemWrite, Branch;
     logic [1:0] ALUOp;
+    logic [1:0] ResultSrc;   // NOVO -- mux do dado de write-back (EX)
+    logic       JumpReg;     // NOVO -- 1 = JALR (alvo rs1+imm), 0 = JAL
 
     logic [2:0] funct3_ex;
     logic [6:0] funct7_ex;
@@ -57,14 +59,16 @@ module pl_cpu (
     // Unidade de controle principal (estagio ID)
     // -------------------------------------------------------------------------
     pl_control ctrl (
-        .Opcode   (opcode),
-        .ALUSrc   (ALUSrc),
-        .MemtoReg (MemtoReg),
-        .RegWrite (RegWrite),
-        .MemRead  (MemRead),
-        .MemWrite (MemWrite),
-        .Branch   (Branch),
-        .ALUOp    (ALUOp)
+        .Opcode    (opcode),
+        .ALUSrc    (ALUSrc),
+        .MemtoReg  (MemtoReg),
+        .RegWrite  (RegWrite),
+        .MemRead   (MemRead),
+        .MemWrite  (MemWrite),
+        .Branch    (Branch),
+        .ALUOp     (ALUOp),
+        .ResultSrc (ResultSrc),
+        .JumpReg   (JumpReg)
     );
 
     // -------------------------------------------------------------------------
@@ -90,6 +94,8 @@ module pl_cpu (
         .MemWrite     (MemWrite),
         .Branch       (Branch),
         .ALUOp        (ALUOp),
+        .ResultSrc    (ResultSrc),
+        .JumpReg      (JumpReg),
         .ALU_CC       (alu_cc),
         .Opcode       (opcode),
         .Funct3_EX    (funct3_ex),
