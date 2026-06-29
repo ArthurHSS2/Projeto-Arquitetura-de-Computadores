@@ -32,6 +32,10 @@
 //   MemWrite   |   0    |  0   |   1   |   0    |   0      |  0  |  0
 //   Branch     |   0    |  0   |   0   |   1    |   0      |  0  |  0
 //   ALUOp      |  10    |  00  |  00   |  01    |   00     | 00  |  00
+//
+// NOTA (correcao): I_IMM usa ALUOp=11 (nao 10), pois ADDI nao pode reusar
+// o decode de R-type -- o bit Funct7[5] e parte livre do imediato em ADDI
+// e nao um seletor real de SUB/ADD (ver pl_alu_ctrl.sv).
 //   ResultSrc  |  00    |  00  |  00   |  00    |   01     | 10  |  11
 //   JumpReg    |   0    |  0   |   0   |   0    | jalr=1   |  0  |  0
 //
@@ -106,7 +110,8 @@ module pl_control (
                 ALUSrc   = 1'b1;   // usar imediato inves de rs2
                 MemtoReg = 1'b0;
                 RegWrite = 1'b1;
-                ALUOp    = 2'b10;  // reuse R-type decode
+                ALUOp    = 2'b11;  // I-type ALU decode (NOT R-type: ADDI must
+                                    // never be mis-read as SUB via Funct7[5])
             end
             JAL: begin
                 RegWrite  = 1'b1;
