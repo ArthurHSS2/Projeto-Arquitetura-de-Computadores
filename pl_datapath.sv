@@ -288,19 +288,7 @@ module pl_datapath (
         .Zero      (zero)
     );
 
-    // -------------------------------------------------------------------
     // Resolucao de branch -- comparador dedicado (independente da ALU)
-    // -------------------------------------------------------------------
-    // Por que nao reaproveitar SUB+Zero da ALU como antes? Aquele truque
-    // so prova igualdade (Zero) corretamente. Para BLT/BGE (com sinal) a
-    // subtracao pode ter overflow e dar a condicao errada; para BLTU/BGEU
-    // precisariamos de outro circuito ainda. Um comparador dedicado, usando
-    // os mesmos operandos ja adiantados (fwd_srca/fwd_srcb), resolve todos
-    // os 6 branches de forma direta e correta.
-    //
-    // Observacao: para instrucoes de branch o controle mantem ALUSrc=0,
-    // logo fwd_srcb (antes do mux ALUSrc) e exatamente o rs2 adiantado --
-    // por isso podemos usa-lo aqui em vez de alu_srcb.
     logic eq, lt_signed, lt_unsigned, branch_taken;
 
     assign eq          = (fwd_srca == fwd_srcb);
@@ -319,9 +307,6 @@ module pl_datapath (
         endcase
     end
 
-    // -------------------------------------------------------------------
-    // Alvos de desvio / salto
-    // -------------------------------------------------------------------
     // pc_plus_imm serve tanto para o alvo de Branch/JAL (PC-relativo)
     // quanto para o resultado de AUIPC (PC + imediato).
     logic [31:0] pc_plus_imm;
@@ -343,13 +328,7 @@ module pl_datapath (
     assign branch_target = redirect_target;
     assign pc_src         = (id_ex.branch && branch_taken) || is_jump;
 
-    // -------------------------------------------------------------------
     // Mux do dado a propagar como "alu_result" pelo restante do pipeline
-    // -------------------------------------------------------------------
-    // Reaproveita o MESMO campo ex_mem.alu_result / mem_wb.alu_result que
-    // ja existia para alimentar o write-back; assim nao precisamos de
-    // nenhum campo novo em ex_mem_t/mem_wb_t. O mux de WB (mem_to_reg ?
-    // read_data : alu_result) permanece inalterado.
     logic [31:0] ex_result;
 
     always_comb begin
@@ -391,21 +370,7 @@ module pl_datapath (
     // =========================================================================
     assign mmio_sel = ex_mem.alu_result[10];
 
-    // -------------------------------------------------------------------
     // STORE -- combinar byte/halfword no word antes de escrever (SB/SH/SW)
-    // -------------------------------------------------------------------
-    // pl_dmem (assim como pl_imem/pl_regfile) e enderecada por palavra e
-    // tem leitura assincrona/combinacional + escrita sincrona (mesmo estilo
-    // documentado nos demais modulos deste projeto). Isso permite o truque
-    // classico de "read-modify-write": no MESMO ciclo em que escrevemos,
-    // dmem_rd ainda reflete o conteudo ANTIGO da palavra naquele endereco
-    // (a escrita so e visivel no proximo ciclo). Por isso podemos montar o
-    // novo valor da palavra aqui, sem nenhuma alteracao em pl_dmem.sv.
-    //
-    // IMPORTANTE: isso pressupoe leitura combinacional em pl_dmem. Se a sua
-    // pl_dmem.sv real tiver leitura sincrona (registrada), este merge
-    // precisa ser feito dentro de pl_dmem (com write-enables por byte) em
-    // vez de aqui -- nesse caso, compartilhe pl_dmem.sv para eu adaptar.
     logic [1:0]  byte_off;
     logic [31:0] store_word;
 
@@ -459,9 +424,7 @@ module pl_datapath (
     logic [31:0] mem_read_raw;
     assign mem_read_raw = mmio_sel ? mmio_rd : dmem_rd;
 
-    // -------------------------------------------------------------------
     // LOAD -- extrair byte/halfword e estender sinal/zero (LB/LH/LW/LBU/LHU)
-    // -------------------------------------------------------------------
     logic [7:0]  load_byte;
     logic [15:0] load_half;
 
