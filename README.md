@@ -1,3 +1,5 @@
+##PUXAR OS ARQUIVOS .SV PARA A PASTA SRC E SUBSTITUIR TODOS OS ARQUIVOS QUANDO PERGUNTADO PELO OS
+
 # RV32I Pipelined Base Project
 
 Processador RISC-V de 32 bits com pipeline de 5 estágios implementado em SystemVerilog, baseado nas seções 4.6 a 4.10 de *Computer Organization and Design: RISC-V Edition* (Patterson & Hennessy). O projeto tem como plataforma alvo a placa **DE2-115** (Intel Cyclone IV E) e é estruturado para servir de base para extensões do conjunto de instruções pelos alunos.
