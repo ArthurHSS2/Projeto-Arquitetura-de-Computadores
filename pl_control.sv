@@ -110,8 +110,7 @@ module pl_control (
                 ALUSrc   = 1'b1;   // usar imediato inves de rs2
                 MemtoReg = 1'b0;
                 RegWrite = 1'b1;
-                ALUOp    = 2'b11;  // I-type ALU decode (NOT R-type: ADDI must
-                                    // never be mis-read as SUB via Funct7[5])
+                ALUOp    = 2'b11;  
             end
             JAL: begin
                 RegWrite  = 1'b1;
